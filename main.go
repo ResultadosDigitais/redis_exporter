@@ -45,6 +45,7 @@ func main() {
 	var (
 		redisAddr           = flag.String("redis.addr", getEnv("REDIS_ADDR", "redis://localhost:6379"), "Address of the Redis instance to scrape")
 		redisUser           = flag.String("redis.user", getEnv("REDIS_USER", ""), "User name to use for authentication (Redis ACL for Redis 6.0 and newer)")
+		redisFile           = flag.String("redis.file", getEnv("REDIS_FILE", ""), "Path to file containing one or more redis nodes, separated by newline. NOTE: mutually exclusive with redis.addr")
 		redisPwd            = flag.String("redis.password", getEnv("REDIS_PASSWORD", ""), "Password of the Redis instance to scrape")
 		namespace           = flag.String("namespace", getEnv("REDIS_EXPORTER_NAMESPACE", "redis"), "Namespace for metrics")
 		checkKeys           = flag.String("check-keys", getEnv("REDIS_EXPORTER_CHECK_KEYS", ""), "Comma separated list of key-patterns to export value and length/size, searched for with SCAN")
@@ -134,32 +135,47 @@ func main() {
 		registry = prometheus.DefaultRegisterer.(*prometheus.Registry)
 	}
 
-	exp, err := NewRedisExporter(
-		*redisAddr,
-		Options{
-			User:                *redisUser,
-			Password:            *redisPwd,
-			Namespace:           *namespace,
-			ConfigCommandName:   *configCommand,
-			CheckKeys:           *checkKeys,
-			CheckSingleKeys:     *checkSingleKeys,
-			LuaScript:           ls,
-			InclSystemMetrics:   *inclSystemMetrics,
-			SetClientName:       *setClientName,
-			IsTile38:            *isTile38,
-			ExportClientList:    *exportClientList,
-			SkipTLSVerification: *skipTLSVerification,
-			ClientCertificates:  tlsClientCertificates,
-			CaCertificates:      tlsCaCertificates,
-			ConnectionTimeouts:  to,
-			MetricsPath:         *metricPath,
-			RedisMetricsOnly:    *redisMetricsOnly,
-			PingOnConnect:       *pingOnConnect,
-			Registry:            registry,
-		},
-	)
-	if err != nil {
-		log.Fatal(err)
+	servers := []serverInfo{serverInfo{addr: *redisAddr, password: *redisPwd, alias: *redisAddr}}
+	if *redisFile != "" {
+		if servers, err = loadRedisFile(*redisFile); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	var exp *Exporter
+	for _, server := range servers {
+		if len(servers) > 1 {
+			server.addConstLabels = true
+		}
+		exp, err = NewRedisExporter(
+			server,
+			ExporterOptions{
+				User:                *redisUser,
+				Password:            *redisPwd,
+				Namespace:           *namespace,
+				ConfigCommandName:   *configCommand,
+				CheckKeys:           *checkKeys,
+				CheckSingleKeys:     *checkSingleKeys,
+				LuaScript:           ls,
+				InclSystemMetrics:   *inclSystemMetrics,
+				SetClientName:       *setClientName,
+				IsTile38:            *isTile38,
+				ExportClientList:    *exportClientList,
+				SkipTLSVerification: *skipTLSVerification,
+				ClientCertificates:  tlsClientCertificates,
+				CaCertificates:      tlsCaCertificates,
+				ConnectionTimeouts:  to,
+				MetricsPath:         *metricPath,
+				RedisMetricsOnly:    *redisMetricsOnly,
+				PingOnConnect:       *pingOnConnect,
+				Registry:            registry,
+			},
+		)
+		if err != nil {
+			log.Fatal(err)
+		} else {
+			log.Infof("Configured with redis addr: %s [%s]", server.addr, server.alias)
+		}
 	}
 
 	log.Infof("Providing metrics at %s%s", *listenAddress, *metricPath)
